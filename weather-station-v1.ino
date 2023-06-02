@@ -5,8 +5,7 @@
 #include <ArduinoJson.h>
 #include <WiFiClientSecureBearSSL.h>
 
-#include <NTPClient.h>
-#include <WiFiUdp.h>
+#include <ESPDateTime.h>
 
 //Wifi config
 const char *ssid = "Cheeloo";
@@ -20,8 +19,7 @@ String serverName = "https://weather-server.fly.dev/api/measure/new-measure";
 Adafruit_BME280 bme;
 
 //NTP server
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org");
+//Using ESPDateTime
 
 unsigned long delayMinutes = 30;
 unsigned long delayTime =  delayMinutes*60*1000;
@@ -34,6 +32,10 @@ struct BME280_read{
   float pressure;
 };
 
+
+/* TODO
+-get configuration from remote
+*/
 void connectToWiFi() {
 //Connect to WiFi Network
    Serial.print("Connecting to WiFi");
@@ -52,20 +54,10 @@ void connectToWiFi() {
       Serial.println(F("WiFi connected!"));
       Serial.println("IP address: ");
       Serial.println(WiFi.localIP());
-      timeClient.begin();
+      setupDateTime();
       //digitalWrite(LED_BUILTIN, LOW); //when connected turn on built in led
   }
     Serial.println(F("Setup ready"));
-}
-
-void printLocalTime()
-{
-  time_t rawtime;
-  struct tm * timeinfo;
-  time (&rawtime);
-  timeinfo = localtime (&rawtime);
-  Serial.println(asctime(timeinfo));
-  delay(1000);
 }
 
 void setup() {
@@ -87,10 +79,9 @@ void setup() {
 void loop() {
   if(status){
     printValues();
-    saveMeasure();
+    sendMeasure();
     delay(delayTime);
     //testSSLConnection();
-  
   }
 }
 
@@ -123,28 +114,35 @@ void testSSLConnection(){
   }
 }
 
-String getDateFromNTP(){
-  timeClient.update();
-  unsigned long epochTime = timeClient.getEpochTime();
-  struct tm *ptm = gmtime ((time_t *)&epochTime);
-  String ISODateTime;
+void setupDateTime() {
+  // setup this after wifi connected
+  // you can use custom timeZone,server and timeout
+  // DateTime.setTimeZone("CST-8");
+  // DateTime.setServer("asia.pool.ntp.org");
+  // DateTime.begin(15 * 1000);
+  // from
+  /** changed from 0.2.x **/
+  DateTime.setTimeZone("CET-1CEST");
+  // this method config ntp and wait for time sync
+  // default timeout is 10 seconds
+  DateTime.begin(/* timeout param */);
+  if (!DateTime.isTimeValid()) {
+    Serial.println("Failed to get time from server.");
+  }
+}
 
-  int monthDay = ptm->tm_mday;
-  int currentMonth = ptm->tm_mon+1;
-  String currentMonthStr;
-  if(currentMonth>=1 && currentMonth<10){ // we need month in format 08,09,10, there must be zero
-    currentMonthStr="0"+String(currentMonth);
-  }
-  else{
-    currentMonthStr=String(currentMonth);
-  }
-  int currentYear = ptm->tm_year+1900;
-  ISODateTime=String(currentYear) + "-" + currentMonthStr + "-" + String(monthDay)
-           +"T"+String(timeClient.getFormattedTime())+"Z";
+String getDateFromNTP(){
+  //Documentation: https://github.com/mcxiaoke/ESPDateTime
+  //https://cplusplus.com/reference/ctime/strftime/
+
+  //Serial.println(DateTime.toUTCString());
+  //Serial.println(DateTime.formatUTC("%FT%T%z"));
+  Serial.println(DateTime.formatUTC("%FT%TZ"));
+  String ISODateTime=DateTime.formatUTC("%FT%TZ");
   return ISODateTime;
 }
 
-void saveMeasure(){
+void sendMeasure(){
   BME280_read bme280_read;
   bme280_read.temperature=bme.readTemperature();
   bme280_read.humidity=bme.readHumidity();
@@ -165,7 +163,7 @@ void saveMeasure(){
         doc["date"] = date;
         doc["temp"] = round(bme280_read.temperature*100)/100;
         doc["humidity"] = round(bme280_read.humidity*100)/100;
-        doc["pressure"] = round(bme280_read.pressure*100)/100;
+        doc["pressure"] = round(bme280_read.pressure)/100;//By default it has to be dived by /100.0F
 
         String json;
         serializeJson(doc, json);
